@@ -1,34 +1,35 @@
-# 1. Go image'dan foydalanamiz
+# 1-qadam: Bazaviy image
 FROM golang:1.22.1 AS builder
 
-# 2. Ishchi katalog yaratamiz
 WORKDIR /app
 
-# 3. Modul va kodlarni nusxalash
+# Modul fayllarni ko‘chirish
 COPY go.mod go.sum ./
 RUN go mod download
 
-# 4. Butun kodni konteynerga nusxalash
+# Ilova kodini ko‘chirish
 COPY . .
 
-# 5. Go kodni kompilyatsiya qilish
-RUN go build -o main .
 
-# 6. Yangi toza image yaratamiz
-FROM golang:1.22.1
+# Ilovani qurish
+RUN go build -o bot .
 
-# 7. Ishchi katalogni o‘rnatamiz
+# 2-qadam: Asosiy image
+FROM debian:bookworm-slim
+
 WORKDIR /app
 
-# 8. Fayllarni nusxalash
-COPY --from=builder /app/main .
-COPY --from=builder /app/config/config.yml ./config/config.yml
+# 🔥 FFMPEG va YT-DLP o‘rnatamiz
+RUN apt update && apt install -y \
+    ffmpeg \
+    wget \
+    python3 \
+    python3-pip && \
+    wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
-# 9. .env faylini nusxalash
-COPY .env .env
+# Binary faylni ko‘chirish
+COPY --from=builder /app/bot .
 
-# 10. Port ochish
-EXPOSE 8080
-
-# 11. Botni ishga tushirish
-CMD ["./main"]
+# Botni ishga tushirish
+CMD ["./bot"]

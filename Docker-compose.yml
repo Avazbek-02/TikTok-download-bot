@@ -1,11 +1,11 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  bot:
+  telegram_bot:
     build: .
     container_name: telegram_bot
-    env_file:
-      - .env
+    restart: always
     volumes:
       - ./downloads:/app/downloads
-    restart: always
+    env_file:
+      - .env
