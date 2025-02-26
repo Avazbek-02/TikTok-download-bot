@@ -268,8 +268,7 @@ func main() {
 			return c.Send("❌ Xatolik: faylni yuborib bo‘lmadi.")
 		}
 
-		// Faylni tozalash
-		// os.Remove(filePath)
+		
 		return nil
 	})
 
