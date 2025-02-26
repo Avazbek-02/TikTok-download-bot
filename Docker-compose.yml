@@ -1,17 +1,9 @@
 services:
-  telegram_bot:
+  bot:
     build: .
     container_name: media_download_bot
     restart: always
-    environment:
-      - API_ID=28127771
-      - API_HASH=9a22b1950d6f05d4092c262fec898d78
-      - BOT_TOKEN=7980716216:AAHxMXTLVw3obzu9ZsphJPScQB1jR7JncIo
     volumes:
-      - ./data:/app/data
-    networks:
-      - bot_network
-
-networks:
-  bot_network:
-    driver: bridge
+      - ./downloads:/app/downloads
+    env_file:
+      - .env

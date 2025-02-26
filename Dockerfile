@@ -1,18 +1,27 @@
-# Python 3.10 asosida imidj yaratamiz
-FROM python:3.10
+# Golang asosidagi imijdan foydalanamiz
+FROM golang:1.22.1
 
 # Ishchi katalogni yaratamiz
 WORKDIR /app
 
 # Kerakli paketlarni o‘rnatamiz
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Playwright brauzerlarini o‘rnatamiz
-RUN playwright install --with-deps
+# yt-dlp ni yuklab olamiz
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
-# Bot skriptini konteynerga nusxalaymiz
+# Go mod va source kodni ko‘chiramiz
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Source kodni ko‘chiramiz
 COPY . .
 
+# Botni build qilamiz
+RUN go build -o bot .
+
 # Botni ishga tushiramiz
-CMD ["python", "scraper.py"]
+CMD ["go", "run", "main.go"]
