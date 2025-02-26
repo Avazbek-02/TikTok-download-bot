@@ -42,6 +42,19 @@ func isValidURL(input string) bool {
 	return true
 }
 
+// func convertToMP4(inputFile string) (string, error) {
+// 	outputFile := inputFile[:len(inputFile)-len(filepath.Ext(inputFile))] + ".mp4"
+// 	cmd := exec.Command("ffmpeg", "-i", inputFile, "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", "-b:a", "192k", outputFile)
+
+// 	err := cmd.Run()
+// 	if err != nil {
+// 		return "", fmt.Errorf("FFmpeg orqali MP4 ga aylantirishda xatolik: %v", err)
+// 	}
+
+// 	// Eski .webm faylni o‘chirib tashlash
+// 	os.Remove(inputFile)
+// 	return outputFile, nil
+// }
 
 
 func isRateLimited(userID int64) bool {
@@ -149,8 +162,7 @@ func downloadMedia(url string, progress chan int) (string, error) {
 
 	files, err := filepath.Glob("downloads/*.mp4")
 	if err != nil || len(files) == 0 {
-
-		return "", fmt.Errorf("Yuklab olingan fayl topilmadi: %s",err)
+		return "", fmt.Errorf("Yuklab olingan fayl topilmadi")
 	}
 
 	return files[0], nil
@@ -180,6 +192,7 @@ func main() {
 		welcomeMsg := `🎉 Assalomu alaykum! Media Download botiga xush kelibsiz! 
 
 📱 Men sizga quyidagi xizmatlarni taqdim etaman:
+- YouTube video/audio
 - Instagram post/reels
 - TikTok video
 - Facebook video
@@ -255,7 +268,8 @@ func main() {
 			return c.Send("❌ Xatolik: faylni yuborib bo‘lmadi.")
 		}
 
-		
+		// Faylni tozalash
+		os.Remove(filePath)
 		return nil
 	})
 
