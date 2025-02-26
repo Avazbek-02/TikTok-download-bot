@@ -269,7 +269,7 @@ func main() {
 		}
 
 		// Faylni tozalash
-		os.Remove(filePath)
+		// os.Remove(filePath)
 		return nil
 	})
 
