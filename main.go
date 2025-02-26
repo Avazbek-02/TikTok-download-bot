@@ -42,6 +42,21 @@ func isValidURL(input string) bool {
 	return true
 }
 
+// func convertToMP4(inputFile string) (string, error) {
+// 	outputFile := inputFile[:len(inputFile)-len(filepath.Ext(inputFile))] + ".mp4"
+// 	cmd := exec.Command("ffmpeg", "-i", inputFile, "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", "-b:a", "192k", outputFile)
+
+// 	err := cmd.Run()
+// 	if err != nil {
+// 		return "", fmt.Errorf("FFmpeg orqali MP4 ga aylantirishda xatolik: %v", err)
+// 	}
+
+// 	// Eski .webm faylni o‘chirib tashlash
+// 	os.Remove(inputFile)
+// 	return outputFile, nil
+// }
+
+
 func isRateLimited(userID int64) bool {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -111,7 +126,9 @@ func logRequest(user *telebot.User, url string) {
 }
 
 func downloadMedia(url string, progress chan int) (string, error) {
-	cmd := exec.Command("yt-dlp", "-o", "downloads/%(title)s.%(ext)s", "--newline", url)
+	// cmd := exec.Command("yt-dlp", "-o", "downloads/%(title)s.%(ext)s", "--newline", url)
+	cmd := exec.Command("yt-dlp", "-f", "mp4", "-o", "downloads/%(title)s.%(ext)s", "--newline", url)
+
 	stderr, _ := cmd.StderrPipe()
 	err := cmd.Start()
 	if err != nil {
