@@ -5,5 +5,7 @@ services:
     restart: always
     volumes:
       - ./downloads:/app/downloads
+      - ./logs:/app/logs
+      - ./instagram_cookies.txt:/app/instagram_cookies.txt
     env_file:
       - .env
