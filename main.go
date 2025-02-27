@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/csv"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -31,6 +32,9 @@ var (
 	
 	// Create a logger
 	logger *log.Logger
+	
+	// Cookie file path
+	instagramCookieFile = "instagram_cookies.txt"
 )
 
 func initLogger() {
@@ -57,6 +61,28 @@ func logError(format string, v ...interface{}) {
 	logMessage := fmt.Sprintf(format, v...)
 	logger.Println("ERROR:", logMessage)
 	fmt.Println("ERROR:", logMessage)
+}
+
+// Checks if Instagram cookie file exists
+func instagramCookieExists() bool {
+	_, err := os.Stat(instagramCookieFile)
+	return err == nil
+}
+
+// Creates a sample Instagram cookie file with instructions
+func createSampleInstagramCookie() error {
+	content := `# This is a sample Instagram cookie file
+# To use real cookies:
+# 1. Log into Instagram in your browser
+# 2. Use a browser extension to export cookies (like "Get cookies.txt" for Chrome)
+# 3. Replace this file with the exported cookies
+# 4. Make sure the file is named "instagram_cookies.txt" in the same directory as the bot
+
+# Format should be: domain_name	TRUE/FALSE	path	secure	expiry	name	value
+.instagram.com	TRUE	/	TRUE	1708123456	sessionid	your_session_id_here
+.instagram.com	TRUE	/	TRUE	1708123456	ds_user_id	your_user_id_here
+`
+	return ioutil.WriteFile(instagramCookieFile, []byte(content), 0644)
 }
 
 func isValidURL(input string) bool {
@@ -167,21 +193,40 @@ func downloadMedia(userID int64, username string, url string, progress chan int)
 	
 	outputTemplate := downloadDir + "/%(title)s.%(ext)s"
 	
-	// Updated yt-dlp command with more options
-	cmd := exec.Command(
-		"yt-dlp",
+	// Basic command arguments
+	cmdArgs := []string{
 		"--verbose",            // More verbose output
 		"--force-ipv4",         // Force IPv4 (can help with some network issues)
 		"--socket-timeout", "30",  // Longer socket timeout
 		"--retries", "10",      // More retries
 		"--fragment-retries", "10", // More fragment retries
 		"--no-check-certificate", // Skip certificate validation
-		"-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4", // Prefer mp4 format
-		"--merge-output-format", "mp4", // Force final output to mp4
-		"-o", outputTemplate,
-		"--newline",
-		url,
-	)
+	}
+	
+	// Special handling for Instagram
+	if service == "Instagram" {
+		if instagramCookieExists() {
+			logInfo("Using Instagram cookie file for authentication")
+			cmdArgs = append(cmdArgs, "--cookies", instagramCookieFile)
+		} else {
+			logInfo("Instagram cookie file not found, creating a sample file")
+			createSampleInstagramCookie()
+			logInfo("Attempting to download without authentication (may fail)")
+		}
+		
+		// For Instagram, use a different format selection
+		cmdArgs = append(cmdArgs, "-f", "best")
+	} else {
+		// For other services, use the optimal format
+		cmdArgs = append(cmdArgs, "-f", "mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4")
+		cmdArgs = append(cmdArgs, "--merge-output-format", "mp4")
+	}
+	
+	// Add output template and URL
+	cmdArgs = append(cmdArgs, "-o", outputTemplate, "--newline", url)
+	
+	// Create the command
+	cmd := exec.Command("yt-dlp", cmdArgs...)
 
 	// Log the exact command
 	logInfo("Running command: %s", strings.Join(cmd.Args, " "))
@@ -230,49 +275,134 @@ func downloadMedia(userID int64, username string, url string, progress chan int)
 	err = cmd.Wait()
 	if err != nil {
 		logError("yt-dlp command failed: %v", err)
+		
+		// If Instagram fails, provide special error message
+		if service == "Instagram" {
+			return "", fmt.Errorf("Instagram yuklab olishda xatolik. Login ma'lumotlar kerak")
+		}
+		
 		return "", err
 	}
 
-	files, err := filepath.Glob(downloadDir + "/*.mp4")
-	if err != nil || len(files) == 0 {
-		logError("No downloaded files found in directory: %s", downloadDir)
-		
-		// Check if there are any other files
-		allFiles, _ := filepath.Glob(downloadDir + "/*")
-		if len(allFiles) > 0 {
-			logInfo("Found non-mp4 files: %v", allFiles)
-			
-			// Try to convert if we found some other format
-			for _, file := range allFiles {
-				if filepath.Ext(file) != ".mp4" && filepath.Ext(file) != "" {
-					outputFile := file[:len(file)-len(filepath.Ext(file))] + ".mp4"
-					logInfo("Attempting to convert %s to %s", file, outputFile)
-					
-					convertCmd := exec.Command("ffmpeg", "-i", file, "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", "-b:a", "192k", outputFile)
-					convertOutput, convertErr := convertCmd.CombinedOutput()
-					logInfo("ffmpeg output: %s", string(convertOutput))
-					
-					if convertErr == nil {
-						logInfo("Conversion successful, using: %s", outputFile)
-						return outputFile, nil
-					} else {
-						logError("Conversion failed: %v", convertErr)
-					}
-				}
-			}
-		}
-		
-		return "", fmt.Errorf("Yuklab olingan fayl topilmadi")
+	// Search for any video files in the download directory
+	videoFiles, _ := filepath.Glob(downloadDir + "/*.mp4")
+	if len(videoFiles) > 0 {
+		logInfo("Found MP4 file: %s", videoFiles[0])
+		return videoFiles[0], nil
 	}
+	
+	// Look for other video formats
+	otherVideoFormats := []string{"*.webm", "*.mkv", "*.mov", "*.avi"}
+	for _, format := range otherVideoFormats {
+		files, _ := filepath.Glob(downloadDir + "/" + format)
+		if len(files) > 0 {
+			inputFile := files[0]
+			outputFile := strings.TrimSuffix(inputFile, filepath.Ext(inputFile)) + ".mp4"
+			
+			logInfo("Converting %s to MP4 format", inputFile)
+			
+			convertCmd := exec.Command("ffmpeg", "-i", inputFile, "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", "-b:a", "192k", outputFile)
+			convertOutput, convertErr := convertCmd.CombinedOutput()
+			
+			if convertErr != nil {
+				logError("Conversion failed: %v\nOutput: %s", convertErr, string(convertOutput))
+				// Try to use original file if conversion fails
+				return inputFile, nil
+			}
+			
+			logInfo("Converted to MP4: %s", outputFile)
+			return outputFile, nil
+		}
+	}
+	
+	// Look for any other files
+	allFiles, _ := filepath.Glob(downloadDir + "/*")
+	if len(allFiles) > 0 {
+		logInfo("Found non-video file: %s", allFiles[0])
+		return allFiles[0], nil
+	}
+	
+	return "", fmt.Errorf("Yuklab olingan fayl topilmadi")
+}
 
-	logInfo("Download completed successfully: %s", files[0])
-	return files[0], nil
+// Separate function for Instagram direct download
+func downloadInstagramWithAPI(url string, downloadDir string) (string, error) {
+	logInfo("Attempting Instagram direct download via API for: %s", url)
+	
+	// Extract Instagram ID from URL
+	re := regexp.MustCompile(`/reel/([A-Za-z0-9_-]+)`)
+	matches := re.FindStringSubmatch(url)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("Instagram ID topilmadi")
+	}
+	
+	instagramID := matches[1]
+	logInfo("Extracted Instagram ID: %s", instagramID)
+	
+	// Use a different API service to download Instagram content
+	// NOTE: Replace with a real working Instagram API service
+	apiURL := fmt.Sprintf("https://instagram-downloader-download-instagram-videos-stories.p.rapidapi.com/index?url=%s", url)
+	
+	// Create curl command to download using the API
+	outputFile := filepath.Join(downloadDir, instagramID+".mp4")
+	
+	cmd := exec.Command("curl", 
+		"-X", "GET", 
+		"-H", "X-RapidAPI-Key: YOUR_RAPIDAPI_KEY", // Replace with your RapidAPI key
+		"-H", "X-RapidAPI-Host: instagram-downloader-download-instagram-videos-stories.p.rapidapi.com",
+		"-o", outputFile,
+		apiURL)
+	
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logError("Instagram API download failed: %v\nOutput: %s", err, string(output))
+		return "", err
+	}
+	
+	// Check if file exists and has content
+	fileInfo, err := os.Stat(outputFile)
+	if err != nil || fileInfo.Size() == 0 {
+		logError("Instagram API returned empty file or error")
+		return "", fmt.Errorf("Instagram API xatolik")
+	}
+	
+	logInfo("Instagram API download successful: %s", outputFile)
+	return outputFile, nil
 }
 
 func main() {
 	// Initialize logger
 	initLogger()
 	logInfo("Starting Media Download Bot")
+	
+	// Check for yt-dlp
+	ytdlpVersionCmd := exec.Command("yt-dlp", "--version")
+	ytdlpVersionOutput, ytdlpVersionErr := ytdlpVersionCmd.CombinedOutput()
+	if ytdlpVersionErr != nil {
+		logError("yt-dlp not found or not working: %v", ytdlpVersionErr)
+		logInfo("Trying to update yt-dlp...")
+		
+		// Try to install/update yt-dlp
+		updateCmd := exec.Command("pip", "install", "--upgrade", "yt-dlp")
+		updateOutput, updateErr := updateCmd.CombinedOutput()
+		if updateErr != nil {
+			logError("Failed to update yt-dlp: %v\nOutput: %s", updateErr, string(updateOutput))
+		} else {
+			logInfo("yt-dlp updated successfully")
+		}
+	} else {
+		logInfo("yt-dlp version: %s", strings.TrimSpace(string(ytdlpVersionOutput)))
+	}
+	
+	// Check for ffmpeg
+	ffmpegVersionCmd := exec.Command("ffmpeg", "-version")
+	_, ffmpegVersionErr := ffmpegVersionCmd.CombinedOutput()
+	if ffmpegVersionErr != nil {
+		logError("ffmpeg not found or not working: %v", ffmpegVersionErr)
+		logInfo("Please install ffmpeg for better video handling")
+	} else {
+		logInfo("ffmpeg found and working")
+	}
 	
 	cnf, err := config.NewConfig()
 	if err != nil {
@@ -325,6 +455,33 @@ func main() {
 		return c.Send(welcomeMsg)
 	})
 
+	// Admin command to set Instagram cookies
+	bot.Handle("/setcookies", func(c telebot.Context) error {
+		user := c.Sender()
+		logInfo("User %d (@%s) tried to set cookies", user.ID, user.Username)
+		
+		// Check if user is admin (add your admin user IDs here)
+		if user.ID != 12345 && user.ID != 67890 { // Replace with your admin user IDs
+			return c.Send("⛔️ Bu buyruq faqat adminlar uchun.")
+		}
+		
+		// Get cookie content from message
+		cookieText := strings.TrimPrefix(c.Text(), "/setcookies ")
+		if cookieText == "/setcookies" || cookieText == "" {
+			return c.Send("❌ Xato format. /setcookies [cookie_matn] ko'rinishida yuboring.")
+		}
+		
+		// Save to cookie file
+		err := ioutil.WriteFile(instagramCookieFile, []byte(cookieText), 0644)
+		if err != nil {
+			logError("Failed to write cookie file: %v", err)
+			return c.Send("❌ Cookie faylni saqlashda xatolik yuz berdi.")
+		}
+		
+		logInfo("Instagram cookies updated successfully")
+		return c.Send("✅ Instagram cookies muvaffaqiyatli yangilandi!")
+	})
+
 	bot.Handle("/version", func(c telebot.Context) error {
 		user := c.Sender()
 		logInfo("User %d (@%s) checked version", user.ID, user.Username)
@@ -333,13 +490,32 @@ func main() {
 		versionCmd := exec.Command("yt-dlp", "--version")
 		versionOutput, versionErr := versionCmd.CombinedOutput()
 		
-		versionText := "yt-dlp version: "
+		var versionText string
 		if versionErr != nil {
-			versionText += "Error checking version"
+			versionText = "yt-dlp version: Error checking version"
 			logError("Failed to check yt-dlp version: %v", versionErr)
 		} else {
-			versionText += strings.TrimSpace(string(versionOutput))
+			versionText = "yt-dlp version: " + strings.TrimSpace(string(versionOutput))
 			logInfo("yt-dlp version: %s", strings.TrimSpace(string(versionOutput)))
+		}
+		
+		// Check ffmpeg version
+		ffmpegCmd := exec.Command("ffmpeg", "-version")
+		ffmpegOutput, ffmpegErr := ffmpegCmd.CombinedOutput()
+		
+		if ffmpegErr != nil {
+			versionText += "\nffmpeg: Not installed or not working"
+		} else {
+			// Extract just the first line of ffmpeg version
+			ffmpegVersion := strings.Split(string(ffmpegOutput), "\n")[0]
+			versionText += "\nffmpeg: " + ffmpegVersion
+		}
+		
+		// Add Instagram cookie status
+		if instagramCookieExists() {
+			versionText += "\nInstagram cookies: Configured"
+		} else {
+			versionText += "\nInstagram cookies: Not configured"
 		}
 		
 		return c.Send(versionText)
@@ -389,12 +565,61 @@ func main() {
 			done <- true
 		}()
 
-		filePath, err := downloadMedia(user.ID, user.Username, url, progress)
-		close(progress)
-		<-done
+		// Create a download directory
+		downloadID := fmt.Sprintf("%d_%d", user.ID, time.Now().Unix())
+		downloadDir := fmt.Sprintf("downloads/%s", downloadID)
+		os.MkdirAll(downloadDir, os.ModePerm)
+
+		var filePath string
+		
+		if service == "Instagram" {
+			// First try with yt-dlp 
+			filePath, err = downloadMedia(user.ID, user.Username, url, progress)
+			if err != nil {
+				logInfo("yt-dlp failed for Instagram, trying alternative method")
+				
+				// If yt-dlp fails for Instagram, try the alternative API method
+				close(progress)
+				<-done
+				
+				// Reset progress tracking for alternative method
+				progress = make(chan int)
+				done = make(chan bool)
+				
+				go func() {
+					// Simulate progress for API method
+					for p := 0; p <= 100; p += 10 {
+						progress <- p
+						time.Sleep(500 * time.Millisecond)
+					}
+					close(progress)
+				}()
+				
+				// Try alternative API
+				filePath, err = downloadInstagramWithAPI(url, downloadDir)
+				<-done
+			} else {
+				close(progress)
+				<-done
+			}
+		} else {
+			// For other services, use the standard method
+			filePath, err = downloadMedia(user.ID, user.Username, url, progress)
+			close(progress)
+			<-done
+		}
 
 		if err != nil {
 			logError("Download failed for User %d (@%s): %v", user.ID, user.Username, err)
+			
+			if service == "Instagram" {
+				return c.Send(`❌ Instagram video yuklab olishda xatolik yuz berdi.
+
+Instagram himoya tizimi tufayli, login ma'lumotlar talab qilinadi.
+
+Administratorga murojaat qiling.`)
+			}
+			
 			return c.Send(fmt.Sprintf("❌ Xatolik: faylni yuklab bo'lmadi. Xato: %v", err))
 		}
 
@@ -410,30 +635,60 @@ func main() {
 			logInfo("File size: %.2f MB", fileSizeMB)
 		}
 
-		video := &telebot.Video{
-			File:    telebot.FromDisk(filePath),
-			Caption: "✨ @media_download_any_bot orqali yuklab olindi",
-		}
-
-		err = c.Send(video)
-		if err != nil {
-			logError("Failed to send video to User %d: %v", user.ID, err)
+		// Determine file type and send appropriately
+		fileExt := strings.ToLower(filepath.Ext(filePath))
+		
+		if fileExt == ".mp4" || fileExt == ".mov" || fileExt == ".avi" || fileExt == ".mkv" || fileExt == ".webm" {
+			// Send as video
+			video := &telebot.Video{
+				File:    telebot.FromDisk(filePath),
+				Caption: "✨ @media_download_any_bot orqali yuklab olindi",
+			}
 			
-			// Try sending as a document if video fails
-			logInfo("Trying to send as document instead")
+			err = c.Send(video)
+			if err != nil {
+				logError("Failed to send video to User %d: %v", user.ID, err)
+				
+				// File might be too large, try sending as document
+				logInfo("Trying to send as document instead")
+				doc := &telebot.Document{
+					File:    telebot.FromDisk(filePath),
+					Caption: "✨ @media_download_any_bot orqali yuklab olindi",
+				}
+				
+				docErr := c.Send(doc)
+				if docErr != nil {
+					logError("Failed to send document: %v", docErr)
+					return c.Send("❌ Xatolik: faylni yuborib bo'lmadi. Hajmi juda katta bo'lishi mumkin.")
+				}
+			}
+		} else if fileExt == ".mp3" || fileExt == ".m4a" || fileExt == ".ogg" || fileExt == ".wav" {
+			// Send as audio
+			audio := &telebot.Audio{
+				File:    telebot.FromDisk(filePath),
+				Caption: "✨ @media_download_any_bot orqali yuklab olindi",
+			}
+			
+			err = c.Send(audio)
+			if err != nil {
+				logError("Failed to send audio: %v", err)
+				return c.Send("❌ Xatolik: faylni yuborib bo'lmadi.")
+			}
+		} else {
+			// Send any other file type as document
 			doc := &telebot.Document{
 				File:    telebot.FromDisk(filePath),
 				Caption: "✨ @media_download_any_bot orqali yuklab olindi",
 			}
 			
-			docErr := c.Send(doc)
-			if docErr != nil {
-				logError("Failed to send document: %v", docErr)
-				return c.Send("❌ Xatolik: faylni yuborib bo'lmadi. Hajmi juda katta bo'lishi mumkin.")
+			err = c.Send(doc)
+			if err != nil {
+				logError("Failed to send document: %v", err)
+				return c.Send("❌ Xatolik: faylni yuborib bo'lmadi.")
 			}
-		} else {
-			logInfo("Successfully sent video to User %d (@%s)", user.ID, user.Username)
 		}
+		
+		logInfo("Successfully sent media to User %d (@%s)", user.ID, user.Username)
 
 		// Clean up the file
 		os.Remove(filePath)
